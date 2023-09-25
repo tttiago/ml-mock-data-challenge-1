@@ -1,0 +1,6 @@
+*.hdf
+__pycache__/
+segments.csv
+
+!psds/**
+
