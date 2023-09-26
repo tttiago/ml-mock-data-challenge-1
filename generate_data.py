@@ -2,32 +2,36 @@
 """A program to generate test-data for the MLGWSC-1.
 """
 import argparse
-import numpy as np
-import h5py
-import os
-import sys
-import logging
-import warnings
-from shutil import copy
-import subprocess
-import time
-import requests
-import tqdm
 import csv
 import gc
+import logging
+import os
+import subprocess
+import sys
+import time
+import warnings
+from shutil import copy
 
-from pycbc.noise.reproduceable import colored_noise
-import pycbc.psd
-from pycbc.types import FrequencySeries, TimeSeries, \
-                        load_frequencyseries, load_timeseries
-from pycbc.inject import InjectionSet
-from pycbc import DYN_RANGE_FAC
-
-from segments import OverlapSegment, SegmentList
+import h5py
 import ligo.segments
+import numpy as np
+import pycbc.psd
+import requests
+import tqdm
+from pycbc import DYN_RANGE_FAC
+from pycbc.inject import InjectionSet
+from pycbc.noise.reproduceable import colored_noise
+from pycbc.types import (
+    FrequencySeries,
+    TimeSeries,
+    load_frequencyseries,
+    load_timeseries,
+)
+from segments import OverlapSegment, SegmentList
 
 TIME_STEP = 24
 TIME_WINDOW = 6
+
 
 def check_file_existence(fpath, force, delete=False):
     if fpath is not None:
@@ -36,19 +40,22 @@ def check_file_existence(fpath, force, delete=False):
                 if delete:
                     os.remove(fpath)
             else:
-                msg = f'The file {fpath} already exists. Set the flag '
-                msg += '`--force` to overwrite existing files.'
+                msg = f"The file {fpath} already exists. Set the flag "
+                msg += "`--force` to overwrite existing files."
                 raise IOError(msg)
+
 
 def base_path():
     return os.path.split(os.path.abspath(__file__))[0]
 
+
 def get_default_path():
-    return os.path.join(base_path(), 'real_noise_file.hdf')
+    return os.path.join(base_path(), "real_noise_file.hdf")
+
 
 def download_data(path=None, resume=True):
     """Download noise data from the central server.
-    
+
     Arguments
     ---------
     path : {str or None, None}
@@ -59,19 +66,19 @@ def download_data(path=None, resume=True):
     """
     if path is None:
         path = get_default_path()
-    assert os.path.splitext(path)[1] == '.hdf'
-    url = 'https://www.atlas.aei.uni-hannover.de/work/marlin.schaefer/MDC/real_noise_file.hdf'
+    assert os.path.splitext(path)[1] == ".hdf"
+    url = "https://www.atlas.aei.uni-hannover.de/work/marlin.schaefer/MDC/real_noise_file.hdf"
     header = {}
     resume_size = 0
     if os.path.isfile(path) and resume:
-        mode = 'ab'
+        mode = "ab"
         resume_size = os.path.getsize(path)
-        header['Range'] = f'bytes={resume_size}-'
+        header["Range"] = f"bytes={resume_size}-"
     else:
-        mode = 'wb'
+        mode = "wb"
     with open(path, mode) as fp:
         response = requests.get(url, stream=True, headers=header)
-        total_size = response.headers.get('content-length')
+        total_size = response.headers.get("content-length")
 
         if total_size is None:
             print("No file length found")
@@ -80,44 +87,53 @@ def download_data(path=None, resume=True):
             total_size = int(total_size)
             desc = f"Downloading real_noise_file.hdf to {path}"
             print(desc)
-            with tqdm.tqdm(total=int(total_size),
-                           unit='B',
-                           unit_scale=True,
-                           dynamic_ncols=True,
-                           desc="Progress: ",
-                           initial=resume_size) as progbar:
+            with tqdm.tqdm(
+                total=int(total_size),
+                unit="B",
+                unit_scale=True,
+                dynamic_ncols=True,
+                desc="Progress: ",
+                initial=resume_size,
+            ) as progbar:
                 for data in response.iter_content(chunk_size=4000):
                     fp.write(data)
                     progbar.update(4000)
 
+
 def load_segments(path=None):
     if path is None:
-        path = os.path.join(base_path(), 'segments.csv')
-    #Download data if it does not exist
+        path = os.path.join(base_path(), "segments.csv")
+    # Download data if it does not exist
     if not os.path.isfile(path):
-        url = 'https://www.atlas.aei.uni-hannover.de/work/marlin.schaefer/MDC/segments.csv'
+        url = "https://www.atlas.aei.uni-hannover.de/work/marlin.schaefer/MDC/segments.csv"
         response = requests.get(url)
-        with open(path, 'wb') as fp:
+        with open(path, "wb") as fp:
             fp.write(response.content)
-    
-    #Load data from CSV file
+
+    # Load data from CSV file
     segs = ligo.segments.segmentlist([])
-    with open(path, 'r') as fp:
+    with open(path, "r") as fp:
         reader = csv.reader(fp)
         for i, row in enumerate(reader):
             if i == 0:
                 continue
             idx, start, end = row
             segs.append(ligo.segments.segment([int(start), int(end)]))
-    
+
     return segs
 
-def restrict_segments(segments=None, start_offset=0, duration=2592000,
-                      min_segment_duration=None, path=None,
-                      slide_buffer=None):
+
+def restrict_segments(
+    segments=None,
+    start_offset=0,
+    duration=2592000,
+    min_segment_duration=None,
+    path=None,
+    slide_buffer=None,
+):
     """Select segments which adhear to the parameters given to the
     function.
-    
+
     Arguments
     ---------
     segments : {ligo.segments.segmentlist or None, None}
@@ -145,7 +161,7 @@ def restrict_segments(segments=None, start_offset=0, duration=2592000,
         The amount of time to elongate each return segment by without
         counting it towards the duration. Needed to slide the data from
         one detector with respect to the others.
-    
+
     Returns
     -------
     ligo.segments.segmentlist:
@@ -154,35 +170,38 @@ def restrict_segments(segments=None, start_offset=0, duration=2592000,
     """
     if slide_buffer is None:
         slide_buffer = 0
-    
+
     if segments is None:
         segments = load_segments(path=path)
-    
+
     past_duration = 0
     ret = ligo.segments.segmentlist([])
     for seg in segments:
-        #Check if enough data has been generated
+        # Check if enough data has been generated
         if past_duration - start_offset >= duration:
             continue
         start, end = seg
         segduration = end - start
-        #Check if segment fulfills minimum duration requirements
+        # Check if segment fulfills minimum duration requirements
         if min_segment_duration is not None and segduration - slide_buffer < min_segment_duration:
             continue
-        #Check if segment does not cut into start_offset
+        # Check if segment does not cut into start_offset
         if past_duration + segduration < start_offset:
             past_duration += segduration - slide_buffer
             continue
-        #Check if segment is only partially required to cover previous time
+        # Check if segment is only partially required to cover previous time
         if past_duration < start_offset:
             start += start_offset - past_duration
             segduration = end - start
             past_duration = start_offset
-            #Check if remainder of segment fulfills minimum duration requirements
-            if min_segment_duration is not None and segduration - slide_buffer < min_segment_duration:
+            # Check if remainder of segment fulfills minimum duration requirements
+            if (
+                min_segment_duration is not None
+                and segduration - slide_buffer < min_segment_duration
+            ):
                 continue
-        
-        #Check if entire segment is too long to be used completely
+
+        # Check if entire segment is too long to be used completely
         if past_duration + segduration - slide_buffer > start_offset + duration:
             end -= past_duration + segduration - (start_offset + duration + slide_buffer)
             segduration = end - start
@@ -194,9 +213,10 @@ def restrict_segments(segments=None, start_offset=0, duration=2592000,
         warnings.warn("Not enough segments to generate the entire requested duration.")
     return ret
 
+
 def store_ts(path, det, ts, force=False):
     """Utility function to save a time series.
-    
+
     Arguments
     ---------
     path : str or None
@@ -211,17 +231,26 @@ def store_ts(path, det, ts, force=False):
     """
     if path is None:
         return
-    
-    group = f'{det}/{int(ts.start_time)}'
+
+    group = f"{det}/{int(ts.start_time)}"
     ts.save(path, group=group)
 
-def get_real_noise(path=None, min_segment_duration=None, start_offset=0,
-                   duration=2592000, slide_buffer=None,
-                   segment_path=None, detectors=['H1', 'L1'],
-                   dyn_range_factor=None, store=None, seed=None,
-                   force=False):
+
+def get_real_noise(
+    path=None,
+    min_segment_duration=None,
+    start_offset=0,
+    duration=2592000,
+    slide_buffer=None,
+    segment_path=None,
+    detectors=["H1", "L1"],
+    dyn_range_factor=None,
+    store=None,
+    seed=None,
+    force=False,
+):
     """Get noise from a file as a SegmentList.
-    
+
     Arguments
     ---------
     path : {str or None, None}
@@ -255,65 +284,65 @@ def get_real_noise(path=None, min_segment_duration=None, start_offset=0,
         `store` is not None.
     force : {bool, False}
         Overwrite existing files. (Only used when store is not None)
-    
+
     Returns
     -------
     SegmentList:
         The SegmentList containing the noise. (Only returns when store
         is None)
     """
-    #Grab default values for options
+    # Grab default values for options
     if path is None:
         path = get_default_path()
     if slide_buffer is None:
         slide_buffer = 0
     if dyn_range_factor is None:
         dyn_range_factor = DYN_RANGE_FAC
-    
+
     if not os.path.isfile(path):
         download_data(path)
-    
-    #If file can't be opened it is probably not done downloading.
+
+    # If file can't be opened it is probably not done downloading.
     try:
-        with h5py.File(path, 'r') as fp:
+        with h5py.File(path, "r") as fp:
             fp.attrs
     except:
         download_data(path, resume=True)
-    
+
     raw_segments = load_segments(path=segment_path)
-    
-    segments = restrict_segments(start_offset=start_offset,
-                                 duration=duration,
-                                 min_segment_duration=min_segment_duration,
-                                 path=segment_path,
-                                 slide_buffer=240)
-    
+
+    segments = restrict_segments(
+        start_offset=start_offset,
+        duration=duration,
+        min_segment_duration=min_segment_duration,
+        path=segment_path,
+        slide_buffer=240,
+    )
+
     load_times = {}
     for seg in segments:
         for rawseg in raw_segments:
             if seg in rawseg:
                 load_times[seg] = rawseg
-                break;
+                break
         if seg not in load_times:
             raise RuntimeError
-    
+
     seglist = SegmentList()
     if store is not None:
         rs = np.random.RandomState(seed)
-    with h5py.File(path, 'r') as fp:
+    with h5py.File(path, "r") as fp:
         for seg in segments:
             start_time = load_times[seg][0]
             segdur = seg[1] - seg[0] - slide_buffer
             overlap_seg = OverlapSegment(duration=segdur)
             for det in detectors:
-                key = f'{det}/{start_time}'
-                epoch = fp[key].attrs['start_time']
-                dt = fp[key].attrs['delta_t']
+                key = f"{det}/{start_time}"
+                epoch = fp[key].attrs["start_time"]
+                dt = fp[key].attrs["delta_t"]
                 sidx = int((seg[0] - epoch) / dt)
                 eidx = int((seg[1] - epoch) / dt)
-                ts = TimeSeries(fp[key][sidx:eidx],
-                                delta_t=dt,
-                                epoch=float(seg[0]))
+                ts = TimeSeries(fp[key][sidx:eidx], delta_t=dt, epoch=float(seg[0]))
                 ts = ts.astype(np.float64) / dyn_range_factor
                 overlap_seg.add_timeseries((det, ts))
             if store is None:
@@ -328,14 +357,24 @@ def get_real_noise(path=None, min_segment_duration=None, start_offset=0,
     else:
         return
 
+
 class NoiseGenerator(object):
-    psd_options = {'H1': [f'psds/H1/psd-{i}.hdf' for i in range(20)],
-                   'L1': [f'psds/L1/psd-{i}.hdf' for i in range(20)]}
-    def __init__(self, dataset, seed=0, filter_duration=128,
-                 sample_rate=2048, low_frequency_cutoff=15,
-                 detectors=['H1', 'L1']):
+    psd_options = {
+        "H1": [f"psds/H1/psd-{i}.hdf" for i in range(20)],
+        "L1": [f"psds/L1/psd-{i}.hdf" for i in range(20)],
+    }
+
+    def __init__(
+        self,
+        dataset,
+        seed=0,
+        filter_duration=128,
+        sample_rate=2048,
+        low_frequency_cutoff=15,
+        detectors=["H1", "L1"],
+    ):
         if dataset not in [1, 2, 3]:
-            raise ValueError(f'PsdGenerator is only defined for datasets 1, 2, and 3.')
+            raise ValueError(f"PsdGenerator is only defined for datasets 1, 2, and 3.")
         self.dataset = dataset
         self.filter_duration = filter_duration
         self.sample_rate = sample_rate
@@ -346,104 +385,121 @@ class NoiseGenerator(object):
         self.plen = int(self.sample_rate / self.delta_f) // 2 + 1
         self.rs = np.random.RandomState(seed=seed)
         self.seed = list(self.rs.randint(0, 2**32, len(self.detectors)))
-    
+
     def __call__(self, start, end, generate_duration=3600):
         return self.get(start, end, generate_duration=generate_duration)
-    
+
     def get(self, start, end, generate_duration=3600):
         keys = {}
         if self.dataset == 1:
-            logging.debug(f'Called with dataset 1')
+            logging.debug(f"Called with dataset 1")
             for det in self.detectors:
-                keys[det] = 'aLIGOZeroDetHighPower'
+                keys[det] = "aLIGOZeroDetHighPower"
         elif self.dataset == 2:
-            logging.debug(f'Called with dataset 2')
+            logging.debug(f"Called with dataset 2")
             for det in self.detectors:
                 if self.fixed_psds[det] is None:
                     key = self.rs.randint(0, len(self.psd_options[det]))
                     self.fixed_psds[det] = self.psd_options[det][key]
                 keys[det] = self.fixed_psds[det]
         elif self.dataset == 3:
-            logging.debug(f'Called with dataset 3')
+            logging.debug(f"Called with dataset 3")
             for det in self.detectors:
                 key = self.rs.randint(0, len(self.psd_options[det]))
                 keys[det] = self.psd_options[det][key]
         else:
-            raise RuntimeError(f'Unkown dataset {self.dataset}.')
-        
-        logging.debug(f'Generated keys {keys}')
+            raise RuntimeError(f"Unkown dataset {self.dataset}.")
+
+        logging.debug(f"Generated keys {keys}")
         ret = {}
         for i, (det, key) in enumerate(keys.items()):
-            logging.debug(f'Starting generating process for detector {det} and key {key}')
-            if isinstance(key, str): #Normal case
-                if os.path.isfile(key): #Check if we have to load PSD
+            logging.debug(f"Starting generating process for detector {det} and key {key}")
+            if isinstance(key, str):  # Normal case
+                if os.path.isfile(key):  # Check if we have to load PSD
                     try:
-                        #Try loading from frequency series
+                        # Try loading from frequency series
                         psd = load_frequencyseries(key)
                     except:
-                        #Try loading ASD from txt file
-                        psd = pycbc.psd.from_txt(key,
-                                                 self.plen,
-                                                 self.delta_f,
-                                                 self.low_frequency_cutoff,
-                                                 is_asd_file=True)
+                        # Try loading ASD from txt file
+                        psd = pycbc.psd.from_txt(
+                            key,
+                            self.plen,
+                            self.delta_f,
+                            self.low_frequency_cutoff,
+                            is_asd_file=True,
+                        )
                 else:
-                    #Try to interpret string as key known to PyCBC
-                    logging.debug(f'Now generating PSD from string {key}')
-                    psd = pycbc.psd.from_string(key,
-                                                self.plen,
-                                                self.delta_f,
-                                                self.low_frequency_cutoff)
-            
+                    # Try to interpret string as key known to PyCBC
+                    logging.debug(f"Now generating PSD from string {key}")
+                    psd = pycbc.psd.from_string(
+                        key, self.plen, self.delta_f, self.low_frequency_cutoff
+                    )
+
             if generate_duration is None:
                 generate_duration = end - start
-                logging.debug(f'Generate duration was None')
-            logging.debug(f'Generate duration set to {generate_duration}')
+                logging.debug(f"Generate duration was None")
+            logging.debug(f"Generate duration set to {generate_duration}")
             done_duration = 0
             noise = None
-            #Generate time series noise in chunks
+            # Generate time series noise in chunks
             while done_duration < end - start:
-                logging.debug(f'Start of loop with done_duration: {done_duration}')
+                logging.debug(f"Start of loop with done_duration: {done_duration}")
                 segstart = start + done_duration
                 segend = min(end, segstart + generate_duration)
-                logging.debug(f'Generation segment: {(segstart, segend)} of duration {segend - segstart}')
-                
-                #Workaround for sample-rate issues
+                logging.debug(
+                    f"Generation segment: {(segstart, segend)} of duration {segend - segstart}"
+                )
+
+                # Workaround for sample-rate issues
                 pad = 0
                 duration = segend - segstart + 256
                 while 1 / (1 / (duration + pad)) != (duration + pad):
                     pad += 1
-                tmp = colored_noise(psd,
-                                    segstart,
-                                    segend+pad,
-                                    seed=self.seed[i],
-                                    sample_rate=self.sample_rate,
-                                    low_frequency_cutoff=self.low_frequency_cutoff)
-                tmp = tmp[:len(tmp)-int(pad * tmp.sample_rate)]
-                #End of workaround for sample-rate issue
-                
-                logging.debug(f'Succsessfully generated time domain noise')
+                tmp = colored_noise(
+                    psd,
+                    segstart,
+                    segend + pad,
+                    seed=self.seed[i],
+                    sample_rate=self.sample_rate,
+                    low_frequency_cutoff=self.low_frequency_cutoff,
+                )
+                tmp = tmp[: len(tmp) - int(pad * tmp.sample_rate)]
+                # End of workaround for sample-rate issue
+
+                logging.debug(f"Succsessfully generated time domain noise")
                 if noise is None:
-                    logging.debug('Setting noise to tmp')
+                    logging.debug("Setting noise to tmp")
                     noise = tmp
                 else:
-                    logging.debug('Appending tmp to noise')
+                    logging.debug("Appending tmp to noise")
                     noise.append_zeros(len(tmp))
-                    noise.data[-len(tmp):] = tmp.data[:]
+                    noise.data[-len(tmp) :] = tmp.data[:]
                 done_duration += segend - segstart
                 gc.collect()
-            logging.debug(f'Exited while loop with done_duration: {done_duration}')
+            logging.debug(f"Exited while loop with done_duration: {done_duration}")
             ret[det] = noise
         return ret
 
-def get_noise(dataset, start_offset=0, duration=2592000, seed=0,
-              low_frequency_cutoff=15, sample_rate=2048,
-              filter_duration=128, min_segment_duration=7200,
-              slide_buffer=240, real_noise_path=None,
-              generate_duration=3600, segment_path=None,
-              detectors=['H1', 'L1'], store=None, force=False):
+
+def get_noise(
+    dataset,
+    start_offset=0,
+    duration=2592000,
+    seed=0,
+    low_frequency_cutoff=15,
+    sample_rate=2048,
+    filter_duration=128,
+    min_segment_duration=7200,
+    slide_buffer=240,
+    real_noise_path=None,
+    generate_duration=3600,
+    segment_path=None,
+    detectors=["H1", "L1"],
+    store=None,
+    force=False,
+):
     """A function to generate real or fake noise.
-    
+
     Arguments
     ---------
     dataset : 1 or 2 or 3 or 4
@@ -492,89 +548,106 @@ def get_noise(dataset, start_offset=0, duration=2592000, seed=0,
         will be returned instead of being stored immediately.
     force : {bool, False}
         Overwrite existing files. (Only used when store is not None)
-    """  
-    
+    """
+
     return_segs = SegmentList()
     if dataset in [1, 2, 3]:
-        segments = restrict_segments(start_offset=start_offset,
-                                     duration=duration,
-                                     min_segment_duration=min_segment_duration,
-                                     path=segment_path)
-        noi_gen = NoiseGenerator(dataset,
-                                 seed=seed,
-                                 filter_duration=filter_duration,
-                                 sample_rate=sample_rate,
-                                 low_frequency_cutoff=low_frequency_cutoff,
-                                 detectors=detectors)
+        segments = restrict_segments(
+            start_offset=start_offset,
+            duration=duration,
+            min_segment_duration=min_segment_duration,
+            path=segment_path,
+        )
+        noi_gen = NoiseGenerator(
+            dataset,
+            seed=seed,
+            filter_duration=filter_duration,
+            sample_rate=sample_rate,
+            low_frequency_cutoff=low_frequency_cutoff,
+            detectors=detectors,
+        )
         for seg in segments:
-            logging.debug(f'Now processing segment {seg} of duration {seg[1] - seg[0]} and generating noise for that')
-            noise = noi_gen(seg[0], seg[1],
-                            generate_duration=generate_duration)
-            logging.debug(f"Finished generating this noise. It is of duration {noise['H1'].duration} and has {len(noise['H1'])} samples.")
-            #TODO: Store these segments here
+            logging.debug(
+                f"Now processing segment {seg} of duration {seg[1] - seg[0]} and generating noise for that"
+            )
+            noise = noi_gen(seg[0], seg[1], generate_duration=generate_duration)
+            logging.debug(
+                f"Finished generating this noise. It is of duration {noise['H1'].duration} and has {len(noise['H1'])} samples."
+            )
+            # TODO: Store these segments here
             ret_seg = OverlapSegment(duration=seg[1] - seg[0])
             for det in detectors:
                 ret_seg.add_timeseries((det, noise[det]))
             if store is None:
                 return_segs.add_segment(ret_seg)
             else:
-                logging.debug(f'Trying to store data to file {store}')
+                logging.debug(f"Trying to store data to file {store}")
                 data = ret_seg.get(shift=False)
-                logging.debug(f'Segment detectors are: {ret_seg.detectors}')
+                logging.debug(f"Segment detectors are: {ret_seg.detectors}")
                 for det, ts in zip(ret_seg.detectors, data):
-                    logging.debug(f'Storing time series of duration {ts.duration} for detector {det} at {store}')
+                    logging.debug(
+                        f"Storing time series of duration {ts.duration} for detector {det} at {store}"
+                    )
                     store_ts(store, det, ts, force=force)
-                with h5py.File(store, 'a') as fp:
-                    fp.attrs['dataset'] = dataset
-                    fp.attrs['start_offset'] = start_offset
-                    fp.attrs['duration'] = duration
-                    fp.attrs['seed'] = seed
-                    fp.attrs['low_frequency_cutoff'] = low_frequency_cutoff
-                    fp.attrs['sample_rate'] = sample_rate
-                    fp.attrs['filter_duration'] = filter_duration
-                    fp.attrs['min_segment_duration'] = min_segment_duration
-                    fp.attrs['real_noise_path'] = real_noise_path if real_noise_path is not None else 'None'
-                    fp.attrs['slide_buffer'] = slide_buffer
-                    fp.attrs['segment_path'] = segment_path if segment_path is not None else 'None'
-                    fp.attrs['detectors'] = detectors
+                with h5py.File(store, "a") as fp:
+                    fp.attrs["dataset"] = dataset
+                    fp.attrs["start_offset"] = start_offset
+                    fp.attrs["duration"] = duration
+                    fp.attrs["seed"] = seed
+                    fp.attrs["low_frequency_cutoff"] = low_frequency_cutoff
+                    fp.attrs["sample_rate"] = sample_rate
+                    fp.attrs["filter_duration"] = filter_duration
+                    fp.attrs["min_segment_duration"] = min_segment_duration
+                    fp.attrs["real_noise_path"] = (
+                        real_noise_path if real_noise_path is not None else "None"
+                    )
+                    fp.attrs["slide_buffer"] = slide_buffer
+                    fp.attrs["segment_path"] = segment_path if segment_path is not None else "None"
+                    fp.attrs["detectors"] = detectors
             gc.collect()
         if store is None:
             return return_segs.get_full_seglist(shift=False)
         else:
             return
     elif dataset == 4:
-        seglist = get_real_noise(path=real_noise_path,
-                                 start_offset=start_offset,
-                                 duration=duration,
-                                 slide_buffer=slide_buffer,
-                                 min_segment_duration=min_segment_duration,
-                                 detectors=detectors,
-                                 store=store,
-                                 seed=seed)
+        seglist = get_real_noise(
+            path=real_noise_path,
+            start_offset=start_offset,
+            duration=duration,
+            slide_buffer=slide_buffer,
+            min_segment_duration=min_segment_duration,
+            detectors=detectors,
+            store=store,
+            seed=seed,
+        )
         if store is None:
             return seglist.get_full_seglist(shift=True, seed=seed)
         else:
-            with h5py.File(store, 'a') as fp:
-                fp.attrs['dataset'] = dataset
-                fp.attrs['start_offset'] = start_offset
-                fp.attrs['duration'] = duration
-                fp.attrs['seed'] = seed
-                fp.attrs['low_frequency_cutoff'] = low_frequency_cutoff
-                fp.attrs['sample_rate'] = sample_rate
-                fp.attrs['filter_duration'] = filter_duration
-                fp.attrs['min_segment_duration'] = min_segment_duration
-                fp.attrs['real_noise_path'] = real_noise_path if real_noise_path is not None else 'None'
-                fp.attrs['slide_buffer'] = slide_buffer
-                fp.attrs['segment_path'] = segment_path if segment_path is not None else 'None'
-                fp.attrs['detectors'] = detectors
+            with h5py.File(store, "a") as fp:
+                fp.attrs["dataset"] = dataset
+                fp.attrs["start_offset"] = start_offset
+                fp.attrs["duration"] = duration
+                fp.attrs["seed"] = seed
+                fp.attrs["low_frequency_cutoff"] = low_frequency_cutoff
+                fp.attrs["sample_rate"] = sample_rate
+                fp.attrs["filter_duration"] = filter_duration
+                fp.attrs["min_segment_duration"] = min_segment_duration
+                fp.attrs["real_noise_path"] = (
+                    real_noise_path if real_noise_path is not None else "None"
+                )
+                fp.attrs["slide_buffer"] = slide_buffer
+                fp.attrs["segment_path"] = segment_path if segment_path is not None else "None"
+                fp.attrs["detectors"] = detectors
             return
     else:
-        raise ValueError(f'Unknown data set {dataset}')
+        raise ValueError(f"Unknown data set {dataset}")
 
-def make_injections(fpath, injection_file, f_lower=20, padding_start=0,
-                    padding_end=0, store=None, force=False):
+
+def make_injections(
+    fpath, injection_file, f_lower=20, padding_start=0, padding_end=0, store=None, force=False
+):
     """Inject waveforms into background.
-    
+
     Arguments
     ---------
     fpath : str
@@ -595,7 +668,7 @@ def make_injections(fpath, injection_file, f_lower=20, padding_start=0,
         will not stored but returned instead.
     force : {bool, False}
         Overwrite existing files.
-    
+
     Returns
     -------
     strain:
@@ -603,197 +676,263 @@ def make_injections(fpath, injection_file, f_lower=20, padding_start=0,
         are lists containing PyCBC TimeSeries. The TimeSeries are the
         background segments plus the added injections.
     """
-    with h5py.File(fpath, 'r') as fp:
+    with h5py.File(fpath, "r") as fp:
         dets = list(fp.keys())
         times = list(fp[dets[0]].keys())
-    
+
     injector = InjectionSet(injection_file)
     injtable = injector.table
-    
+
     ret = {}
     for t in times:
         for det in dets:
             if det not in ret:
                 ret[det] = []
-            group = f'{det}/{t}'
+            group = f"{det}/{t}"
             ts = load_timeseries(fpath, group=group)
-            idxs = np.where(np.logical_and(float(ts.start_time) + padding_start <= injtable['tc'],
-                                           injtable['tc'] <= float(ts.end_time) - padding_end))[0]
+            idxs = np.where(
+                np.logical_and(
+                    float(ts.start_time) + padding_start <= injtable["tc"],
+                    injtable["tc"] <= float(ts.end_time) - padding_end,
+                )
+            )[0]
             if len(idxs) > 0:
-                injector.apply(ts, det, f_lower=f_lower,
-                               simulation_ids=list(idxs))
+                injector.apply(ts, det, f_lower=f_lower, simulation_ids=list(idxs))
             store_ts(store, det, ts, force=force)
             if store is None:
                 ret[det].append(ts)
-    
+
     if store is None:
         return ret
     else:
-        with h5py.File(store, 'a') as fp:
-            fp.attrs['background-file'] = fpath
-            fp.attrs['injection-file'] = injection_file
-            fp.attrs['f_lower'] = f_lower
-            fp.attrs['padding_start'] = padding_start
-            fp.attrs['padding_end'] = padding_end
+        with h5py.File(store, "a") as fp:
+            fp.attrs["background-file"] = fpath
+            fp.attrs["injection-file"] = injection_file
+            fp.attrs["f_lower"] = f_lower
+            fp.attrs["padding_start"] = padding_start
+            fp.attrs["padding_end"] = padding_end
         return
+
 
 def main(doc):
     parser = argparse.ArgumentParser(description=doc)
-    
-    parser.add_argument('-d', '--data-set', type=int, choices=[1, 2, 3, 4], default=1,
-                        help="The data set type that should be generated. "
-                             "Please refer to https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets "
-                             "for more information.")
-    parser.add_argument('-i', '--output-injection-file', type=str,
-                        help=("Path at which the generated injections "
-                              "should be stored. If an injection file is "
-                              "loaded by setting the option "
-                              "`--injection-file` and this option is "
-                              "set, the loaded injection file will be "
-                              "copied to the specified location. If this "
-                              "option is not set a injection file may be "
-                              "temporarily stored in the execution "
-                              "directory and deleted after use. "
-                              "(Extension must be `.hdf`)"))
-    parser.add_argument('-f', '--output-foreground-file', type=str,
-                        help=("Path at which to store the foreground "
-                              "data. The foreground data is the pure "
-                              "noise plus additive signals. If this "
-                              "option is not specified no foreground "
-                              "data will be generated and stored."))
-    parser.add_argument('-b', '--output-background-file', type=str,
-                        help=("Path at which to store the background "
-                              "data. The background data is the pure "
-                              "noise without additive signals. If this "
-                              "option is not specified no background "
-                              "data will be generated and stored."))
-    
-    parser.add_argument('-s', '--seed', type=int, default=0,
-                        help=("The seed to use for data generation. "
-                              "A negative number will result in a "
-                              "random seed for each call."
-                              "Default: 0"))
-    parser.add_argument('--start-offset', type=int, default=0,
-                        help=("An integer specifying the start time offset. "
-                              "This option is meant to enable the "
-                              "generation of multiple parts of a single "
-                              "datastream. It sets the internal time "
-                              "which always starts at 0. "
-                              "It is not to be confused with the GPS "
-                              "start time of real data. The GPS start "
-                              "time will be set automatically by the "
-                              "code. Default: 0"))
-    parser.add_argument('--duration', type=int, default=2592000,
-                        help=("The duration of data to generate in "
-                              "seconds. Default: 2,592,000"))
-    parser.add_argument('--generate-duration', type=int, default=3600,
-                        help=("When generating noise this amount is "
-                              "generated at a time and the results are "
-                              "concatenated. Lower numbers reduce "
-                              "memory requirements."))
-    
-    parser.add_argument('--injection-file', type=str,
-                        help=("Path to an injection file that should be "
-                              "used. If this option is not set "
-                              "injections will be generated automatically."))
-    
-    parser.add_argument('--verbose', action='store_true',
-                        help="Print update messages.")
-    parser.add_argument('--force', action='store_true',
-                        help="Overwrite existing files.")
-    
+
+    parser.add_argument(
+        "-d",
+        "--data-set",
+        type=int,
+        choices=[1, 2, 3, 4],
+        default=1,
+        help="The data set type that should be generated. "
+        "Please refer to https://github.com/gwastro/ml-mock-data-challenge-1/wiki/Data-Sets "
+        "for more information.",
+    )
+    parser.add_argument(
+        "-i",
+        "--output-injection-file",
+        type=str,
+        help=(
+            "Path at which the generated injections "
+            "should be stored. If an injection file is "
+            "loaded by setting the option "
+            "`--injection-file` and this option is "
+            "set, the loaded injection file will be "
+            "copied to the specified location. If this "
+            "option is not set a injection file may be "
+            "temporarily stored in the execution "
+            "directory and deleted after use. "
+            "(Extension must be `.hdf`)"
+        ),
+    )
+    parser.add_argument(
+        "-f",
+        "--output-foreground-file",
+        type=str,
+        help=(
+            "Path at which to store the foreground "
+            "data. The foreground data is the pure "
+            "noise plus additive signals. If this "
+            "option is not specified no foreground "
+            "data will be generated and stored."
+        ),
+    )
+    parser.add_argument(
+        "-b",
+        "--output-background-file",
+        type=str,
+        help=(
+            "Path at which to store the background "
+            "data. The background data is the pure "
+            "noise without additive signals. If this "
+            "option is not specified no background "
+            "data will be generated and stored."
+        ),
+    )
+
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=0,
+        help=(
+            "The seed to use for data generation. "
+            "A negative number will result in a "
+            "random seed for each call."
+            "Default: 0"
+        ),
+    )
+    parser.add_argument(
+        "--start-offset",
+        type=int,
+        default=0,
+        help=(
+            "An integer specifying the start time offset. "
+            "This option is meant to enable the "
+            "generation of multiple parts of a single "
+            "datastream. It sets the internal time "
+            "which always starts at 0. "
+            "It is not to be confused with the GPS "
+            "start time of real data. The GPS start "
+            "time will be set automatically by the "
+            "code. Default: 0"
+        ),
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=2592000,
+        help=("The duration of data to generate in " "seconds. Default: 2,592,000"),
+    )
+    parser.add_argument(
+        "--generate-duration",
+        type=int,
+        default=3600,
+        help=(
+            "When generating noise this amount is "
+            "generated at a time and the results are "
+            "concatenated. Lower numbers reduce "
+            "memory requirements."
+        ),
+    )
+
+    parser.add_argument(
+        "--injection-file",
+        type=str,
+        help=(
+            "Path to an injection file that should be "
+            "used. If this option is not set "
+            "injections will be generated automatically."
+        ),
+    )
+
+    parser.add_argument("--verbose", action="store_true", help="Print update messages.")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
+
     args = parser.parse_args()
-    
-    #Setup logging
+
+    # Setup logging
     log_level = logging.INFO if args.verbose else logging.WARN
-    logging.basicConfig(format='%(levelname)s | %(asctime)s: %(message)s',
-                        level=log_level, datefmt='%d-%m-%Y %H:%M:%S')
-    
-    if args.output_injection_file is None and \
-       args.output_background_file is None and \
-       args.output_foreground_file is None:
-       raise ValueError(f'No options to store data were set.')
-    
-    #Sanity checks of provided options
+    logging.basicConfig(
+        format="%(levelname)s | %(asctime)s: %(message)s",
+        level=log_level,
+        datefmt="%d-%m-%Y %H:%M:%S",
+    )
+
+    if (
+        args.output_injection_file is None
+        and args.output_background_file is None
+        and args.output_foreground_file is None
+    ):
+        raise ValueError(f"No options to store data were set.")
+
+    # Sanity checks of provided options
     if args.output_foreground_file is None:
-        msg = ("The option `--output-foreground-file` was not set and"
-               "thus no foreground file will be generated or stored!")
+        msg = (
+            "The option `--output-foreground-file` was not set and"
+            "thus no foreground file will be generated or stored!"
+        )
         warnings.warn(msg, RuntimeWarning)
-    
+
     tmp_bg = False
     if args.output_background_file is None:
-        msg = ("The option `--output-background-file` was not set and"
-               "thus no background file will be generated or stored!")
+        msg = (
+            "The option `--output-background-file` was not set and"
+            "thus no background file will be generated or stored!"
+        )
         warnings.warn(msg, RuntimeWarning)
         if args.output_foreground_file is not None:
             tmp_bg = True
-            args.output_background_file = os.path.join(base_path(),
-                                                       f'TMP-{time.time()}-BG.hdf')
-    
-    #Test if files already exist
+            args.output_background_file = os.path.join(base_path(), f"TMP-{time.time()}-BG.hdf")
+
+    # Test if files already exist
     fpath = args.output_injection_file
     if fpath is not None:
-        assert os.path.splitext(fpath)[1] == '.hdf', 'File path must end in `.hdf`'
+        assert os.path.splitext(fpath)[1] == ".hdf", "File path must end in `.hdf`"
         check_file_existence(fpath, args.force)
     fpath = args.output_foreground_file
     if fpath is not None:
-        assert os.path.splitext(fpath)[1] == '.hdf', 'File path must end in `.hdf`'
+        assert os.path.splitext(fpath)[1] == ".hdf", "File path must end in `.hdf`"
         check_file_existence(fpath, args.force, delete=True)
     fpath = args.output_background_file
     if fpath is not None:
-        assert os.path.splitext(fpath)[1] == '.hdf', 'File path must end in `.hdf`'
+        assert os.path.splitext(fpath)[1] == ".hdf", "File path must end in `.hdf`"
         check_file_existence(fpath, args.force, delete=True)
-    
+
     if args.seed < 0:
         rs = np.random.RandomState()
         args.seed = rs.randint(0, np.uint32(-1))
-    
+
     tmp_inj = False
     try:
-        #Generate noise background
-        if args.output_background_file is not None or \
-           args.output_foreground_file is not None:
-            logging.info('Getting noise')
-            get_noise(args.data_set, start_offset=args.start_offset,
-                      duration=args.duration, seed=args.seed,
-                      store=args.output_background_file, force=args.force)
-        
+        # Generate noise background
+        if args.output_background_file is not None or args.output_foreground_file is not None:
+            logging.info("Getting noise")
+            get_noise(
+                args.data_set,
+                start_offset=args.start_offset,
+                duration=args.duration,
+                seed=args.seed,
+                store=args.output_background_file,
+                force=args.force,
+            )
+
         segs = load_segments()
         tstart, tend = segs.extent()
-        
-        #Take care of injections
+
+        # Take care of injections
         if args.injection_file is None:
-            #Create injections
-            logging.info('Generating injections')
-            inj_config_paths = {1: os.path.join(base_path(), 'ds1.ini'),
-                                2: os.path.join(base_path(), 'ds2.ini'),
-                                3: os.path.join(base_path(), 'ds3.ini'),
-                                4: os.path.join(base_path(), 'ds4.ini')}
-            cmd = ['pycbc_create_injections']
-            cmd += ['--config-files', str(inj_config_paths[args.data_set])]
-            cmd += ['--gps-start-time', str(tstart)]
-            cmd += ['--gps-end-time', str(tend)]
-            cmd += ['--time-step', str(TIME_STEP)]
-            cmd += ['--time-window', str(TIME_WINDOW)]
-            cmd += ['--seed', str(args.seed)]
+            # Create injections
+            logging.info("Generating injections")
+            inj_config_paths = {
+                1: os.path.join(base_path(), "ds1.ini"),
+                2: os.path.join(base_path(), "ds2.ini"),
+                3: os.path.join(base_path(), "ds3.ini"),
+                4: os.path.join(base_path(), "ds4.ini"),
+            }
+            cmd = ["pycbc_create_injections"]
+            cmd += ["--config-files", str(inj_config_paths[args.data_set])]
+            cmd += ["--gps-start-time", str(tstart)]
+            cmd += ["--gps-end-time", str(tend)]
+            cmd += ["--time-step", str(TIME_STEP)]
+            cmd += ["--time-window", str(TIME_WINDOW)]
+            cmd += ["--seed", str(args.seed)]
             if args.output_injection_file is None:
-                args.injection_file = os.path.join(base_path(),
-                                                   f'TMP-{time.time()}-INJ.hdf')
+                args.injection_file = os.path.join(base_path(), f"TMP-{time.time()}-INJ.hdf")
                 tmp_inj = True
             else:
                 args.injection_file = args.output_injection_file
-            cmd += ['--output-file', args.injection_file]
+            cmd += ["--output-file", args.injection_file]
             if args.verbose:
-                cmd += ['--verbose']
+                cmd += ["--verbose"]
             if args.force:
-                cmd += ['--force']
+                cmd += ["--force"]
             subprocess.call(cmd)
         elif args.output_injection_file is not None:
-            #Copy injection file
+            # Copy injection file
             copy(args.injection_file, args.output_injection_file)
-        
+
         if args.output_foreground_file is None:
-            logging.info('No output for the foreground file was specified. Skipping injections.')
+            logging.info("No output for the foreground file was specified. Skipping injections.")
             if tmp_bg and args.output_background_file is not None:
                 if os.path.isfile(args.output_background_file):
                     os.remove(args.output_background_file)
@@ -801,22 +940,24 @@ def main(doc):
                 if os.path.isfile(args.injection_file):
                     os.remove(args.injection_file)
             return
-        
-        make_injections(args.output_background_file,
-                        args.injection_file,
-                        f_lower=20,
-                        padding_start=30,
-                        padding_end=30,
-                        store=args.output_foreground_file,
-                        force=args.force)
-        
-        with h5py.File(args.output_background_file, 'r') as bgfile:
-            with h5py.File(args.output_foreground_file, 'a') as fgfile:
+
+        make_injections(
+            args.output_background_file,
+            args.injection_file,
+            f_lower=20,
+            padding_start=30,
+            padding_end=30,
+            store=args.output_foreground_file,
+            force=args.force,
+        )
+
+        with h5py.File(args.output_background_file, "r") as bgfile:
+            with h5py.File(args.output_foreground_file, "a") as fgfile:
                 attrs = dict(bgfile.attrs)
                 for key, val in attrs.items():
                     fgfile.attrs[key] = val
-        
-        logging.info(f'Saved foreground to {args.output_foreground_file}')
+
+        logging.info(f"Saved foreground to {args.output_foreground_file}")
     except Exception as e:
         if tmp_bg and args.output_background_file is not None:
             if os.path.isfile(args.output_background_file):
@@ -832,6 +973,7 @@ def main(doc):
         if os.path.isfile(args.injection_file):
             os.remove(args.injection_file)
     return
+
 
 if __name__ == "__main__":
     main(__doc__)
