@@ -842,7 +842,7 @@ def main(doc):
     # Sanity checks of provided options
     if args.output_foreground_file is None:
         msg = (
-            "The option `--output-foreground-file` was not set and"
+            "The option `--output-foreground-file` was not set and "
             "thus no foreground file will be generated or stored!"
         )
         warnings.warn(msg, RuntimeWarning)
@@ -850,7 +850,7 @@ def main(doc):
     tmp_bg = False
     if args.output_background_file is None:
         msg = (
-            "The option `--output-background-file` was not set and"
+            "The option `--output-background-file` was not set and "
             "thus no background file will be generated or stored!"
         )
         warnings.warn(msg, RuntimeWarning)
