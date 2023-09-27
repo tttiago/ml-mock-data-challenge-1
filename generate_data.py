@@ -7,7 +7,6 @@ import gc
 import logging
 import os
 import subprocess
-import sys
 import time
 import warnings
 from shutil import copy
@@ -21,12 +20,7 @@ import tqdm
 from pycbc import DYN_RANGE_FAC
 from pycbc.inject import InjectionSet
 from pycbc.noise.reproduceable import colored_noise
-from pycbc.types import (
-    FrequencySeries,
-    TimeSeries,
-    load_frequencyseries,
-    load_timeseries,
-)
+from pycbc.types import TimeSeries, load_frequencyseries, load_timeseries
 from segments import OverlapSegment, SegmentList
 
 TIME_STEP = 24
