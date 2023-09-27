@@ -1,9 +1,6 @@
 import numpy as np
-import json
-import h5py
-import time
-from pycbc.types import TimeSeries
 from pycbc.inject import InjectionSet
+from pycbc.types import TimeSeries
 
 # Notes:
 #  -Right now the initial time series have to overlap. Why is that
@@ -12,13 +9,14 @@ from pycbc.inject import InjectionSet
 #   What if both of them are long enough and we could slide them in such
 #   a way that they would overlap?
 
+
 class OverlapSegment(object):
     """A class to handle time series of different detectors which are
     overlapping in time.
-    
+
     It provides functionality to shift those time series with respect to
     one another and thereby create unique combinations.
-    
+
     Arguments
     ---------
     timeseries : tuple of (str, TimeSeries)
@@ -27,6 +25,7 @@ class OverlapSegment(object):
     duration : {None or float, None}
         The required duration of the overlapping region.
     """
+
     def __init__(self, *timeseries, duration=None):
         self.duration = duration
         self.timeseries = None
@@ -34,75 +33,76 @@ class OverlapSegment(object):
         for ts in timeseries:
             self.add_timeseries(ts)
         pass
-    
+
     @property
     def start_time(self):
         if self.timeseries is None:
             return None
         return max([ts.start_time for ts in self.timeseries])
-    
+
     @property
     def end_time(self):
         if self.timeseries is None:
             return None
         return min([ts.end_time for ts in self.timeseries])
-    
+
     @property
     def delta_t(self):
         if self.timeseries is None:
             return None
         return self.timeseries[0].delta_t
-    
+
     @property
     def sample_rate(self):
         if self.timeseries is None:
             return None
         return self.timeseries[0].sample_rate
-    
+
     def add_timeseries(self, timeseries):
         det, ts = timeseries
         if not isinstance(ts, TimeSeries):
-            raise TypeError(f'The input to `add_timeseries` must be an iterable of length two, where the first entry specifies the detector and the second is a time series.')
+            raise TypeError(
+                f"The input to `add_timeseries` must be an iterable of length two, where the first entry specifies the detector and the second is a time series."
+            )
         if self.timeseries is None:
             if self.duration is not None:
                 if ts.duration < self.duration:
-                    raise ValueError(f'Cannot add time series.')
+                    raise ValueError(f"Cannot add time series.")
             self.timeseries = [ts]
             self.detectors = [det]
             return
-        
+
         if ts.delta_t != self.delta_t:
-            raise ValueError(f'Delta t not matching.')
-        
+            raise ValueError(f"Delta t not matching.")
+
         new_start = float(max(self.start_time, ts.start_time))
         new_end = float(min(self.end_time, ts.end_time))
         new_max_dur = new_end - new_start
-        
+
         if self.duration is None:
             if new_max_dur < 0:
-                raise ValueError(f'Cannot add time series.')
+                raise ValueError(f"Cannot add time series.")
             self.timeseries.append(ts)
             self.detectors.append(det)
             return
-        
+
         if new_max_dur < self.duration:
-            raise ValueError(f'Cannot add time series.')
+            raise ValueError(f"Cannot add time series.")
         self.timeseries.append(ts)
         self.detectors.append(det)
         return
-    
+
     def get(self, seed=None, shift=True, random_start_time=False):
-        return self.get3(seed=seed, shift=shift,
-                         random_start_time=random_start_time)
-     
+        return self.get3(seed=seed, shift=shift, random_start_time=random_start_time)
+
     def get1(self, seed=None, shift=True, random_start_time=False):
-    # This function only shifts the first time series and the last n - 1
-    # time series. The last n - 1 time series will be shifted all by the same amount
+        # This function only shifts the first time series and the last n - 1
+        # time series. The last n - 1 time series will be shifted all by the same amount
         if self.timeseries is None:
             return
-        
+
         rs = np.random.RandomState(seed=seed)
-        
+
         if random_start_time and self.duration is not None:
             mintime = float(self.start_time)
             maxtime = float(self.end_time) - float(self.duration)
@@ -112,29 +112,31 @@ class OverlapSegment(object):
                 start_time = mintime
         else:
             start_time = float(self.start_time)
-        
+
         indices = []
         for ts in self.timeseries:
-            start = int((float(self.start_time) - float(ts.start_time))
-                        / ts.delta_t)
+            start = int((float(self.start_time) - float(ts.start_time)) / ts.delta_t)
             if self.duration is None:
-                end = int((float(self.end_time) - float(ts.start_time))
-                          / ts.delta_t)
+                end = int((float(self.end_time) - float(ts.start_time)) / ts.delta_t)
             else:
                 end = start + int(self.duration / ts.delta_t)
             if len(indices) > 0:
                 assert (end - start) == (indices[-1][1] - indices[-1][0])
             indices.append((start, end))
-        
+
         ret = []
         if not shift:
             for i, ts in enumerate(self.timeseries):
-                ret.append(TimeSeries(ts.data[indices[i][0]:indices[i][1]],
-                                          epoch=start_time,
-                                          delta_t=ts.delta_t))
+                ret.append(
+                    TimeSeries(
+                        ts.data[indices[i][0] : indices[i][1]],
+                        epoch=start_time,
+                        delta_t=ts.delta_t,
+                    )
+                )
             return ret
-        
-        #Handle upper
+
+        # Handle upper
         rsmin = -indices[0][0]
         rsmax = len(self.timeseries[0]) - indices[0][1]
         if rsmin >= rsmax:
@@ -144,14 +146,13 @@ class OverlapSegment(object):
         sidx = indices[0][0] + shiftidx
         eidx = indices[0][1] + shiftidx
         dat = self.timeseries[0].data[sidx:eidx]
-        ret.append(TimeSeries(dat, epoch=start_time,
-                              delta_t=self.delta_t))
-        
-        #Only one segment
+        ret.append(TimeSeries(dat, epoch=start_time, delta_t=self.delta_t))
+
+        # Only one segment
         if len(self.timeseries) < 2:
             return ret
-        
-        #Handle lower
+
+        # Handle lower
         tss = self.timeseries[1:]
         rsmin = -min([pt[0] for pt in indices[1:]])
         rsmax = min([len(ts) - ind[1] for (ts, ind) in zip(tss, indices[1:])])
@@ -163,16 +164,15 @@ class OverlapSegment(object):
             sidx = ind[0] + shiftidx
             eidx = ind[1] + shiftidx
             dat = ts.data[sidx:eidx]
-            ret.append(TimeSeries(dat, epoch=start_time,
-                                  delta_t=self.delta_t))
+            ret.append(TimeSeries(dat, epoch=start_time, delta_t=self.delta_t))
         return ret
-    
+
     def get2(self, seed=None, shift=True, random_start_time=False):
         if self.timeseries is None:
             return
-        
+
         rs = np.random.RandomState(seed=seed)
-        
+
         if random_start_time and self.duration is not None:
             mintime = float(self.start_time)
             maxtime = float(self.end_time) - float(self.duration)
@@ -182,29 +182,31 @@ class OverlapSegment(object):
                 start_time = mintime
         else:
             start_time = float(self.start_time)
-        
+
         indices = []
         for ts in self.timeseries:
-            start = int((float(self.start_time) - float(ts.start_time))
-                        / ts.delta_t)
+            start = int((float(self.start_time) - float(ts.start_time)) / ts.delta_t)
             if self.duration is None:
-                end = int((float(self.end_time) - float(ts.start_time))
-                          / ts.delta_t)
+                end = int((float(self.end_time) - float(ts.start_time)) / ts.delta_t)
             else:
                 end = start + int(self.duration / ts.delta_t)
             if len(indices) > 0:
                 assert (end - start) == (indices[-1][1] - indices[-1][0])
             indices.append((start, end))
-        
+
         ret = []
         if not shift:
             for i, ts in enumerate(self.timeseries):
-                ret.append(TimeSeries(ts.data[indices[i][0]:indices[i][1]],
-                                      epoch=start_time,
-                                      delta_t=ts.delta_t))
+                ret.append(
+                    TimeSeries(
+                        ts.data[indices[i][0] : indices[i][1]],
+                        epoch=start_time,
+                        delta_t=ts.delta_t,
+                    )
+                )
             return ret
-        
-        #Handle upper
+
+        # Handle upper
         for ind, ts in zip(indices, self.timeseries):
             rsmin = -ind[0]
             rsmax = len(ts) - ind[1]
@@ -215,20 +217,19 @@ class OverlapSegment(object):
             sidx = ind[0] + shiftidx
             eidx = ind[1] + shiftidx
             dat = ts.data[sidx:eidx]
-            ret.append(TimeSeries(dat, epoch=start_time,
-                                  delta_t=self.delta_t))
-        
+            ret.append(TimeSeries(dat, epoch=start_time, delta_t=self.delta_t))
+
         return ret
-    
+
     def get3(self, seed=None, shift=True, random_start_time=False):
         """Shift only the last n-1 time series and keep the first one
         fixed.
         """
         if self.timeseries is None:
             return
-        
+
         rs = np.random.RandomState(seed=seed)
-        
+
         if random_start_time and self.duration is not None:
             mintime = float(self.start_time)
             maxtime = float(self.end_time) - float(self.duration)
@@ -238,35 +239,36 @@ class OverlapSegment(object):
                 start_time = mintime
         else:
             start_time = float(self.start_time)
-        
+
         indices = []
         for ts in self.timeseries:
-            start = int((float(self.start_time) - float(ts.start_time))
-                        / ts.delta_t)
+            start = int((float(self.start_time) - float(ts.start_time)) / ts.delta_t)
             if self.duration is None:
-                end = int((float(self.end_time) - float(ts.start_time))
-                          / ts.delta_t)
+                end = int((float(self.end_time) - float(ts.start_time)) / ts.delta_t)
             else:
                 end = start + int(self.duration / ts.delta_t)
             if len(indices) > 0:
                 assert (end - start) == (indices[-1][1] - indices[-1][0])
             indices.append((start, end))
-        
+
         ret = []
         if not shift:
             for i, ts in enumerate(self.timeseries):
-                ret.append(TimeSeries(ts.data[indices[i][0]:indices[i][1]],
-                                      epoch=start_time,
-                                      delta_t=ts.delta_t))
+                ret.append(
+                    TimeSeries(
+                        ts.data[indices[i][0] : indices[i][1]],
+                        epoch=start_time,
+                        delta_t=ts.delta_t,
+                    )
+                )
             return ret
-        
-        #Handle upper
+
+        # Handle upper
         for i, (ind, ts) in enumerate(zip(indices, self.timeseries)):
             if i == 0:
                 sidx, eidx = ind
                 dat = ts.data[sidx:eidx]
-                ret.append(TimeSeries(dat, epoch=start_time,
-                                      delta_t=self.delta_t))
+                ret.append(TimeSeries(dat, epoch=start_time, delta_t=self.delta_t))
                 continue
             rsmin = -ind[0]
             rsmax = len(ts) - ind[1]
@@ -277,15 +279,14 @@ class OverlapSegment(object):
             sidx = ind[0] + shiftidx
             eidx = ind[1] + shiftidx
             dat = ts.data[sidx:eidx]
-            ret.append(TimeSeries(dat, epoch=start_time,
-                                  delta_t=self.delta_t))
-        
+            ret.append(TimeSeries(dat, epoch=start_time, delta_t=self.delta_t))
+
         return ret
-    
+
     @classmethod
     def from_hdf_datasets(cls, *datasets, **kwargs):
         """Constructor from an opened HDF5-file dataset.
-        
+
         Arguments
         ---------
         datasets : One or multiple dataset objects of an open HDF5 file
@@ -296,15 +297,15 @@ class OverlapSegment(object):
         """
         timeseries = []
         for ds in datasets:
-            timseries.append(TimeSeries(ds[()],
-                                        epoch=ds.attrs['start_time'],
-                                        delta_t=ds.attrs['delta_t']))
+            timeseries.append(
+                TimeSeries(ds[()], epoch=ds.attrs["start_time"], delta_t=ds.attrs["delta_t"])
+            )
         return cls(timeseries, **kwargs)
-    
+
     @classmethod
     def from_hdf_group(cls, group, **kwargs):
         """Constructor from an opened HDF5-file group.
-        
+
         Arguments
         ---------
         group : group object of an open HDF5 file
@@ -319,41 +320,53 @@ class OverlapSegment(object):
         timeseries = []
         for key in sorted(group.keys()):
             ds = group[key]
-            timseries.append(TimeSeries(ds[()],
-                                        epoch=ds.attrs['start_time'],
-                                        delta_t=ds.attrs['delta_t']))
+            timeseries.append(
+                TimeSeries(ds[()], epoch=ds.attrs["start_time"], delta_t=ds.attrs["delta_t"])
+            )
         return cls(timeseries, **kwargs)
+
 
 class SegmentList(object):
     def __init__(self, *segments):
         self.segments = None
         for segment in segments:
             self.add_segment(segment)
-    
+
     def add_segment(self, segment):
         if self.segments is None:
             self.segments = [segment]
             return
-        
-        idx = np.searchsorted([float(seg.start_time) for seg in self.segments],
-                              float(segment.start_time), side='right')
+
+        idx = np.searchsorted(
+            [float(seg.start_time) for seg in self.segments],
+            float(segment.start_time),
+            side="right",
+        )
         if idx == len(self.segments):
             self.segments.append(segment)
             return
-        
-        #TODO: Consider random start times from Segment.get
+
+        # TODO: Consider random start times from Segment.get
         if float(segment.start_time) + segment.duration > float(self.segments[idx].start_time):
-            raise ValueError(f'Segment is too long to be added without overlap.')
-        
+            raise ValueError(f"Segment is too long to be added without overlap.")
+
         self.segments.insert(idx, segment)
-    
-    def apply_injections(self, injection_file, shift_injections=True,
-                         seed=None, shift_data=True, padding_start=0,
-                         padding_end=0, random_start_time=False,
-                         f_lower=None, return_times=False,
-                         return_indices=False):
+
+    def apply_injections(
+        self,
+        injection_file,
+        shift_injections=True,
+        seed=None,
+        shift_data=True,
+        padding_start=0,
+        padding_end=0,
+        random_start_time=False,
+        f_lower=None,
+        return_times=False,
+        return_indices=False,
+    ):
         """Apply injections from an injection file to a set of segments.
-        
+
         Arguments
         ---------
         injection_file : str
@@ -384,7 +397,7 @@ class SegmentList(object):
             Return the shifted injection times.
         return_indices : {bool, False}
             Return injection-file indices of injected signals.
-        
+
         Returns
         -------
         list:
@@ -395,7 +408,7 @@ class SegmentList(object):
             The injection times as shifted by the function.
         np.array, optional:
             The indices in the injection file of the injected signals.
-        
+
         Notes
         -----
         shift_injections:
@@ -428,47 +441,51 @@ class SegmentList(object):
         indices = []
         injtimes = []
         for segment in self.segments:
-            timeseries = segment.get(seed=seed, shift=shift_data,
-                                     random_start_time=random_start_time)
+            timeseries = segment.get(
+                seed=seed, shift=shift_data, random_start_time=random_start_time
+            )
             detectors = segment.detectors
-            
-            #All time series should have same start time, end time, and delta_t
+
+            # All time series should have same start time, end time, and delta_t
             ts = timeseries[0]
-            
-            #Shift injections to appropriate start time
+
+            # Shift injections to appropriate start time
             if shift_injections:
                 addition = float(ts.start_time) - passed_dur + padding_start
-                injtable['tc'] += addition
-            
-            idxs = np.where(np.logical_and(float(ts.start_time) + padding_start <= injtable['tc'],
-                                           injtable['tc'] <= float(ts.end_time) - padding_end))[0]
+                injtable["tc"] += addition
+
+            idxs = np.where(
+                np.logical_and(
+                    float(ts.start_time) + padding_start <= injtable["tc"],
+                    injtable["tc"] <= float(ts.end_time) - padding_end,
+                )
+            )[0]
 
             indices.append(idxs)
-            injtimes.append(injtable['tc'][idxs])
-            
+            injtimes.append(injtable["tc"][idxs])
+
             tmp = {}
             for det, ts in zip(detectors, timeseries):
                 tscopy = ts.copy()
-                
-                #Apply injections
-                injector.apply(tscopy, det, f_lower=f_lower,
-                               simulation_ids=list(idxs))
-                
+
+                # Apply injections
+                injector.apply(tscopy, det, f_lower=f_lower, simulation_ids=list(idxs))
+
                 tmp[det] = tscopy
-            
-            #Shift injections back to original
+
+            # Shift injections back to original
             if shift_injections:
-                injtable['tc'] -= addition
-            
+                injtable["tc"] -= addition
+
             if segment.duration is None:
                 passed_dur += float(segment.end_time) - float(segment.start_time)
             else:
                 passed_dur += segment.duration
             ret.append(tmp)
-        
+
         indices = np.concatenate(indices)
         injtimes = np.concatenate(injtimes)
-        
+
         if return_times:
             if return_indices:
                 return ret, injtimes, indices
@@ -479,18 +496,17 @@ class SegmentList(object):
                 return ret, indices
             else:
                 return ret
-    
+
     def get(self, seed=None, shift=True, random_start_time=False):
         if self.segments is None:
             return None
         ret = []
         for segment in self.segments:
-            timeseries = segment.get(seed=seed, shift=shift,
-                                     random_start_time=random_start_time)
+            timeseries = segment.get(seed=seed, shift=shift, random_start_time=random_start_time)
             detectors = segment.detectors
             ret.append({det: ts for (det, ts) in zip(detectors, timeseries)})
         return ret
-    
+
     def get_full(self, **kwargs):
         gotten = self.get(**kwargs)
         dets = self.detectors
@@ -503,11 +519,9 @@ class SegmentList(object):
                 if det in dic:
                     ret[det].append(dic[det])
                 else:
-                    ret[det].append(TimeSeries(np.zeros(seglen),
-                                               delta_t=dt,
-                                               epoch=epoch))
+                    ret[det].append(TimeSeries(np.zeros(seglen), delta_t=dt, epoch=epoch))
         return ret
-    
+
     def get_full_seglist(self, **kwargs):
         gotten = self.get(**kwargs)
         dets = self.detectors
@@ -521,13 +535,11 @@ class SegmentList(object):
                 if det in dic:
                     ts = dic[det]
                 else:
-                    ts = TimeSeries(np.zeros(seglen),
-                                    delta_t=dt,
-                                    epoch=epoch)
+                    ts = TimeSeries(np.zeros(seglen), delta_t=dt, epoch=epoch)
                 seg.add_timeseries((det, ts))
             ret.add_segment(seg)
         return ret
-    
+
     def min_duration(self, duration):
         segs = []
         for seg in self.segments:
@@ -539,26 +551,26 @@ class SegmentList(object):
                 continue
             segs.append(seg)
         return SegmentList(*segs)
-    
+
     @property
     def detectors(self):
         detectors = set([])
         for seg in self.segments:
             detectors = detectors.union(set(seg.detectors))
         return list(detectors)
-    
+
     @property
     def start_time(self):
         if self.segments is None:
             return
         return min([seg.start_time for seg in self.segments])
-    
+
     @property
     def end_time(self):
         if self.segments is None:
             return
         return max([seg.end_time for seg in self.segments])
-    
+
     @property
     def duration(self):
         ret = 0
