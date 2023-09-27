@@ -820,12 +820,18 @@ def main(doc):
     )
 
     parser.add_argument("--verbose", action="store_true", help="Print update messages.")
+    parser.add_argument("--debug", action="store_true", help="Print debug messages.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
 
     args = parser.parse_args()
 
     # Setup logging
-    log_level = logging.INFO if args.verbose else logging.WARN
+    if args.debug:
+        log_level = logging.DEBUG
+    elif args.info:
+        log_level = logging.INFO
+    else:
+        log_level = logging.WARN
     logging.basicConfig(
         format="%(levelname)s | %(asctime)s: %(message)s",
         level=log_level,
