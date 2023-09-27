@@ -5,3 +5,8 @@ segments.csv
 !psds/**
 
 *.yaml
+
+# artemisa files
+condor_logs/
+run*.sub
+run*.sh
