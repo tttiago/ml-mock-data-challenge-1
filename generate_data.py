@@ -560,7 +560,7 @@ def get_noise(
             low_frequency_cutoff=low_frequency_cutoff,
             detectors=detectors,
         )
-        for seg in segments:
+        for seg in tqdm.tqdm(segments):
             logging.debug(
                 f"Now processing segment {seg} of duration {seg[1] - seg[0]} and generating noise for that"
             )
@@ -828,7 +828,7 @@ def main(doc):
     # Setup logging
     if args.debug:
         log_level = logging.DEBUG
-    elif args.info:
+    elif args.verbose:
         log_level = logging.INFO
     else:
         log_level = logging.WARN
@@ -886,7 +886,7 @@ def main(doc):
     try:
         # Generate noise background
         if args.output_background_file is not None or args.output_foreground_file is not None:
-            logging.info("Getting noise")
+            logging.info("Getting noise.")
             get_noise(
                 args.data_set,
                 start_offset=args.start_offset,
@@ -895,6 +895,7 @@ def main(doc):
                 store=args.output_background_file,
                 force=args.force,
             )
+            logging.info("Finished getting noise.")
 
         segs = load_segments()
         tstart, tend = segs.extent()
