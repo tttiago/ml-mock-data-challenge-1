@@ -10,3 +10,6 @@ segments.csv
 condor_logs/
 run*.sub
 run*.sh
+
+# osvaldo's files
+osvaldo*
