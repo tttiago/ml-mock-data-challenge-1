@@ -903,7 +903,7 @@ def main(doc):
         # Take care of injections
         if args.injection_file is None:
             # Create injections
-            logging.info("Generating injections")
+            logging.info("Generating injections.")
             inj_config_paths = {
                 1: os.path.join(base_path(), "ds1.ini"),
                 2: os.path.join(base_path(), "ds2.ini"),
@@ -923,11 +923,12 @@ def main(doc):
             else:
                 args.injection_file = args.output_injection_file
             cmd += ["--output-file", args.injection_file]
-            if args.verbose:
+            if args.debug:
                 cmd += ["--verbose"]
             if args.force:
                 cmd += ["--force"]
             subprocess.call(cmd)
+            logging.info("Finished generating injections.")
         elif args.output_injection_file is not None:
             # Copy injection file
             copy(args.injection_file, args.output_injection_file)
@@ -942,6 +943,7 @@ def main(doc):
                     os.remove(args.injection_file)
             return
 
+        logging.info("Making injections.")
         make_injections(
             args.output_background_file,
             args.injection_file,
@@ -951,6 +953,7 @@ def main(doc):
             store=args.output_foreground_file,
             force=args.force,
         )
+        logging.info("Finished making injections.")
 
         with h5py.File(args.output_background_file, "r") as bgfile:
             with h5py.File(args.output_foreground_file, "a") as fgfile:
